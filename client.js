@@ -1,13 +1,11 @@
 /**
  * Client half of the `llm-dsh-token-usage` bundle plugin.
  *
- * Registers one sidebar footer action (`sidebar.footer.action`) whose trigger
- * copies the shipped Cordis footer-action geometry, and one fixed panel that
- * is anchored above that trigger. The host half (`index.js`) owns the data;
- * this module only reads `/api/llm-token-usage/stats` and renders it.
+ * Registers a sidebar footer action whose panel shows the all-time token total
+ * and a GitHub-style daily calendar heatmap. Hovering a day shows its exact
+ * input/output/cache/session breakdown.
  *
- * Plain-JS bundle format: `react` is the only runtime module, no JSX, and the
- * factory has no side effects beyond returning `{ inject, apply }`.
+ * Plain-JS bundle format: `react` is the only runtime module, no JSX.
  */
 window.__ModuleLoader__.load({
   id: 'llm-dsh-token-usage',
@@ -17,14 +15,10 @@ window.__ModuleLoader__.load({
 
     /** Stats route owned by the host half of this bundle. */
     const STATS_PATH = '/api/llm-token-usage/stats'
-    /** Selectable ranges, in days. */
-    const RANGE_OPTIONS = [7, 14, 30, 90]
-    /** Range selected on first render. */
-    const DEFAULT_RANGE_DAYS = 30
-    /** Summary card window that always means "last week". */
-    const WEEK_DAYS = 7
     /** Marker attribute for the single injected stylesheet. */
     const STYLE_MARKER = 'data-llm-token-usage-style'
+    /** Number of days the calendar shows, including today. */
+    const CALENDAR_DAYS = 365
 
     /** Simplified Chinese dictionary. */
     const ZH = {
@@ -32,27 +26,27 @@ window.__ModuleLoader__.load({
       panelTitle: 'Token 用量',
       refresh: '刷新',
       close: '关闭',
-      cardToday: '今日',
-      cardWeek: '近 7 天',
-      cardRange: (days) => `近 ${days} 天`,
+      total: '总量',
       inputOutput: '输入+输出',
       cacheRead: '缓存读取',
-      rangeLabel: '统计范围',
-      rangeOption: (days) => `${days} 天`,
-      chartLabel: (days) => `近 ${days} 天每日 Token 用量柱状图`,
-      columnDate: '日期',
-      columnTotal: '总量',
-      columnInput: '输入',
-      columnOutput: '输出',
-      columnCacheRead: '缓存读',
-      columnSessions: '会话',
+      cacheWrite: '缓存写入',
+      sessions: '会话',
+      today: '今日',
+      activeDays: '活跃天数',
+      calendarLabel: '每日 Token 用量日历',
+      less: '少',
+      more: '多',
+      noUsage: '暂无用量',
       loading: '正在读取 Token 用量…',
       refreshing: '正在刷新…',
-      empty: '该范围内没有 Token 用量记录。',
+      empty: '还没有记录到 Token 用量。',
       loadFailed: (message) => `读取 Token 用量失败：${message}`,
       retry: '重试',
       incomplete: (count) => `${count} 个会话读取失败，统计可能不完整。`,
-      barTitle: (date, value) => `${date} · ${value} tokens`,
+      truncated: '日历显示最近 365 天，顶部总量为全部历史。',
+      tokens: 'tokens',
+      monthNames: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+      weekdays: ['一', '二', '三', '四', '五', '六', '日'],
     }
 
     /** English dictionary, key for key with {@link ZH}. */
@@ -61,27 +55,27 @@ window.__ModuleLoader__.load({
       panelTitle: 'Token usage',
       refresh: 'Refresh',
       close: 'Close',
-      cardToday: 'Today',
-      cardWeek: 'Last 7 days',
-      cardRange: (days) => `Last ${days} days`,
+      total: 'Total',
       inputOutput: 'in + out',
       cacheRead: 'cache read',
-      rangeLabel: 'Range',
-      rangeOption: (days) => `${days}d`,
-      chartLabel: (days) => `Daily token usage over the last ${days} days`,
-      columnDate: 'Date',
-      columnTotal: 'Total',
-      columnInput: 'Input',
-      columnOutput: 'Output',
-      columnCacheRead: 'Cache read',
-      columnSessions: 'Sessions',
+      cacheWrite: 'cache write',
+      sessions: 'Sessions',
+      today: 'Today',
+      activeDays: 'Active days',
+      calendarLabel: 'Daily token usage calendar',
+      less: 'Less',
+      more: 'More',
+      noUsage: 'No usage',
       loading: 'Loading token usage…',
       refreshing: 'Refreshing…',
-      empty: 'No token usage recorded in this range.',
+      empty: 'No token usage recorded yet.',
       loadFailed: (message) => `Could not load token usage: ${message}`,
       retry: 'Retry',
       incomplete: (count) => `${count} session(s) could not be read; totals may be incomplete.`,
-      barTitle: (date, value) => `${date} · ${value} tokens`,
+      truncated: 'The calendar shows the most recent 365 days; the headline covers all history.',
+      tokens: 'tokens',
+      monthNames: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+      weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
     }
 
     /** Chinese when the document or the browser asks for it, English otherwise. */
@@ -116,36 +110,70 @@ window.__ModuleLoader__.load({
       return trimFraction((count / 1e3).toFixed(1)) + 'K'
     }
 
-    /** Sum the trailing `size` days of a series into one bucket record. */
-    function seriesWindow(series, size) {
-      const sum = {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        totalTokens: 0,
-        inputOutputTokens: 0,
-        sessions: 0,
-      }
-      const start = Math.max(0, series.length - size)
-      for (let index = start; index < series.length; index += 1) {
-        const day = series[index]
-        sum.inputTokens += numberOf(day.inputTokens)
-        sum.outputTokens += numberOf(day.outputTokens)
-        sum.cacheReadTokens += numberOf(day.cacheReadTokens)
-        sum.cacheWriteTokens += numberOf(day.cacheWriteTokens)
-        sum.totalTokens += numberOf(day.totalTokens)
-        sum.inputOutputTokens += numberOf(day.inputOutputTokens)
-        sum.sessions += numberOf(day.sessions)
-      }
-      if (sum.inputOutputTokens === 0) sum.inputOutputTokens = sum.inputTokens + sum.outputTokens
-      if (sum.totalTokens === 0) {
-        sum.totalTokens = sum.inputTokens + sum.outputTokens + sum.cacheReadTokens + sum.cacheWriteTokens
-      }
-      return sum
+    /** Exact token count with locale digit grouping. */
+    function formatFull(value, language) {
+      return (Number(value) || 0).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')
     }
 
-    /** Original bar-chart artwork for the trigger. */
+    /** Local calendar day key (`YYYY-MM-DD`). */
+    function dayKey(date) {
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return `${date.getFullYear()}-${month}-${day}`
+    }
+
+    /** Midnight of the given date in the local timezone. */
+    function startOfDay(value) {
+      const date = new Date(value)
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+    }
+
+    /** Add whole days without crossing a DST hour. */
+    function addDays(date, days) {
+      const next = new Date(date)
+      next.setDate(next.getDate() + days)
+      return next
+    }
+
+    /**
+     * Build a Monday-first calendar grid ending today.
+     * @param {readonly any[]} series - ascending daily buckets from the host.
+     * @param {Date} today - local current day.
+     * @returns {{ weeks: Array<Array<any>>, labels: Array<{ week: number, label: string }> }}
+     */
+    function buildCalendar(series, today) {
+      const byDay = new Map(series.map(day => [day.date, day]))
+      const end = startOfDay(today)
+      const start = addDays(end, -(CALENDAR_DAYS - 1))
+      start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
+      const weeks = []
+      const labels = []
+      let lastMonth = -1
+      let cursor = start
+      while (cursor <= end) {
+        const week = []
+        for (let row = 0; row < 7; row += 1) {
+          const date = addDays(cursor, row)
+          const key = dayKey(date)
+          week.push({
+            key,
+            date,
+            inRange: date >= start && date <= end,
+            day: byDay.get(key),
+          })
+        }
+        const first = week.find(cell => cell.inRange)
+        if (first !== undefined && first.date.getMonth() !== lastMonth) {
+          lastMonth = first.date.getMonth()
+          labels.push({ week: weeks.length, month: lastMonth })
+        }
+        weeks.push(week)
+        cursor = addDays(cursor, 7)
+      }
+      return { weeks, labels }
+    }
+
+    /** One compact bar-chart mark for the footer trigger. */
     function barChartIcon(size) {
       return h('svg', {
         width: size,
@@ -200,86 +228,129 @@ window.__ModuleLoader__.load({
       ])
     }
 
-    /** One summary card: total, then the non-cache and cache-read figures. */
-    function SummaryCard({ label, entry, t }) {
-      const total = numberOf(entry === null || entry === undefined ? 0 : entry.totalTokens)
-      const withoutCache = numberOf(entry === null || entry === undefined ? 0 : entry.inputOutputTokens)
-      const cacheRead = numberOf(entry === null || entry === undefined ? 0 : entry.cacheReadTokens)
-      return h('div', { className: 'llmtu-card' }, [
-        h('span', { key: 'label', className: 'llmtu-card-label', children: label }),
-        h('span', { key: 'value', className: 'llmtu-card-value', children: formatTokens(total) }),
-        h('span', { key: 'sub', className: 'llmtu-card-sub' },
-          `${t.inputOutput} ${formatTokens(withoutCache)} · ${t.cacheRead} ${formatTokens(cacheRead)}`),
-      ])
-    }
-
-    /** Zero-filled daily bars: the busiest day fills the plot, today stands out. */
-    function BarChart({ series, todayDate, t }) {
-      let peak = 0
-      for (const day of series) peak = Math.max(peak, numberOf(day.totalTokens))
-      return h('div', {
-        className: 'llmtu-chart',
-        role: 'img',
-        'aria-label': t.chartLabel(series.length),
-      }, series.map((day) => {
-        const total = numberOf(day.totalTokens)
-        const height = peak === 0 || total === 0 ? 0 : Math.max(2, Math.round((total / peak) * 100))
-        return h('div', { key: day.date, className: 'llmtu-bar-column' },
-          h('div', {
-            className: 'llmtu-bar',
-            'data-today': day.date === todayDate || undefined,
-            style: { height: `${height}%` },
-            title: t.barTitle(day.date, formatTokens(total)),
-          }))
-      }))
-    }
-
-    /** Newest-first daily rows with tabular figures for every numeric column. */
-    function DailyTable({ series, todayDate, t }) {
-      const header = h('thead', { key: 'head' }, h('tr', null, [
-        h('th', { key: 'date', scope: 'col', children: t.columnDate }),
-        h('th', { key: 'total', scope: 'col', className: 'llmtu-num', children: t.columnTotal }),
-        h('th', { key: 'input', scope: 'col', className: 'llmtu-num', children: t.columnInput }),
-        h('th', { key: 'output', scope: 'col', className: 'llmtu-num', children: t.columnOutput }),
-        h('th', { key: 'cache', scope: 'col', className: 'llmtu-num', children: t.columnCacheRead }),
-        h('th', { key: 'sessions', scope: 'col', className: 'llmtu-num', children: t.columnSessions }),
-      ]))
-      const rows = series.slice().reverse().map((day) => h('tr', {
-        key: day.date,
-        'data-today': day.date === todayDate || undefined,
-      }, [
-        h('td', { key: 'date', className: 'llmtu-date', children: day.date }),
-        h('td', { key: 'total', className: 'llmtu-num llmtu-strong', children: formatTokens(day.totalTokens) }),
-        h('td', { key: 'input', className: 'llmtu-num', children: formatTokens(day.inputTokens) }),
-        h('td', { key: 'output', className: 'llmtu-num', children: formatTokens(day.outputTokens) }),
-        h('td', { key: 'cache', className: 'llmtu-num', children: formatTokens(day.cacheReadTokens) }),
-        h('td', { key: 'sessions', className: 'llmtu-num', children: String(numberOf(day.sessions)) }),
-      ]))
-      return h('table', { className: 'llmtu-table' }, [header, h('tbody', { key: 'body' }, rows)])
-    }
     /** Both dictionaries, keyed by {@link detectLanguage}. */
     const MESSAGES = { zh: ZH, en: EN }
 
+    /** Resolve the stats route against the page base so mounted Web prefixes work. */
+    function statsUrl(refresh) {
+      const url = new URL(STATS_PATH.slice(1), document.baseURI)
+      url.searchParams.set('range', 'all')
+      if (refresh) url.searchParams.set('refresh', '1')
+      return url.toString()
+    }
+
+    /** Quantile thresholds keep the heatmap readable across very different ranges. */
+    function thresholdsOf(values) {
+      if (values.length === 0) return [0, 0, 0]
+      const at = ratio => values[Math.min(values.length - 1, Math.floor(ratio * (values.length - 1)))]
+      return [at(0.25), at(0.5), at(0.75)]
+    }
+
+    /** GitHub-style daily token heatmap with a hover/focus detail card. */
+    function Calendar({ series, todayKey, t }) {
+      const language = detectLanguage()
+      const [hover, setHover] = React.useState(null)
+      const calendar = React.useMemo(() => buildCalendar(series, new Date()), [series])
+      const values = React.useMemo(
+        () => series.map(day => numberOf(day.totalTokens)).filter(value => value > 0).sort((left, right) => left - right),
+        [series],
+      )
+      const thresholds = React.useMemo(() => thresholdsOf(values), [values])
+      const levelOf = (value) => {
+        if (value <= 0) return 0
+        if (value <= thresholds[0]) return 1
+        if (value <= thresholds[1]) return 2
+        if (value <= thresholds[2]) return 3
+        return 4
+      }
+      const show = (event, cell) => {
+        const rect = event.currentTarget.getBoundingClientRect()
+        const day = cell.day ?? {
+          totalTokens: 0, inputOutputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, sessions: 0,
+        }
+        setHover({ x: rect.left + rect.width / 2, y: rect.top, key: cell.key, day })
+      }
+      const hide = () => { setHover(null) }
+      return h('div', { className: 'llmtu-cal' }, [
+        h('div', {
+          key: 'months',
+          className: 'llmtu-cal-months',
+          style: { gridTemplateColumns: `repeat(${calendar.weeks.length}, var(--llmtu-cell))` },
+        }, calendar.labels.map(label => h('span', {
+          key: label.week,
+          className: 'llmtu-cal-month',
+          style: { gridColumn: String(label.week + 1) },
+        }, t.monthNames[label.month]))),
+        h('div', { key: 'body', className: 'llmtu-cal-body' }, [
+          h('div', { key: 'weekdays', className: 'llmtu-cal-weekdays' }, t.weekdays.map((name, index) => h('span', {
+            key: name,
+            className: 'llmtu-cal-weekday',
+          }, index === 0 || index === 2 || index === 4 ? name : ''))),
+          h('div', { key: 'scroll', className: 'llmtu-cal-scroll' },
+            h('div', { className: 'llmtu-cal-weeks' }, calendar.weeks.map((week, weekIndex) => h('div', {
+              key: weekIndex,
+              className: 'llmtu-cal-week',
+            }, week.map(cell => h('div', {
+              key: cell.key,
+              className: 'llmtu-cal-cell',
+              'data-level': cell.inRange ? levelOf(numberOf(cell.day?.totalTokens)) : 'blank',
+              'data-today': cell.key === todayKey ? '' : undefined,
+              tabIndex: cell.inRange && numberOf(cell.day?.totalTokens) > 0 ? 0 : undefined,
+              role: cell.inRange ? 'img' : undefined,
+              'aria-label': cell.inRange
+                ? `${cell.key}: ${formatFull(cell.day?.totalTokens ?? 0, language)} ${t.tokens}`
+                : undefined,
+              onMouseEnter: cell.inRange ? event => { show(event, cell) } : undefined,
+              onFocus: cell.inRange ? event => { show(event, cell) } : undefined,
+              onMouseLeave: hide,
+              onBlur: hide,
+            })))))),
+        ]),
+        h('div', { key: 'legend', className: 'llmtu-cal-legend' }, [
+          h('span', { key: 'less' }, t.less),
+          ...[0, 1, 2, 3, 4].map(level => h('span', {
+            key: level,
+            className: 'llmtu-cal-swatch',
+            'data-level': level,
+          })),
+          h('span', { key: 'more' }, t.more),
+        ]),
+        hover === null ? null : h('div', {
+          key: 'tip',
+          className: 'llmtu-cal-tip',
+          style: { left: hover.x, top: hover.y },
+          role: 'tooltip',
+        }, [
+          h('strong', { key: 'date', className: 'llmtu-cal-tip-date' }, hover.key),
+          h('div', { key: 'total' }, `${t.total} ${formatFull(hover.day.totalTokens, language)}`),
+          h('div', { key: 'io' }, `${t.inputOutput} ${formatFull(hover.day.inputOutputTokens, language)}`),
+          h('div', { key: 'cache' },
+            `${t.cacheRead} ${formatFull(hover.day.cacheReadTokens, language)} · ${t.cacheWrite} ${formatFull(hover.day.cacheWriteTokens, language)}`),
+          h('div', { key: 'sessions' }, `${t.sessions} ${numberOf(hover.day.sessions)}`),
+        ]),
+      ])
+    }
+
     /**
      * Sidebar footer action: a trigger matching the shipped Cordis geometry
-     * (`wide` row vs. 36px rail icon) plus the panel it toggles.
+     * (`wide` row vs. 36px rail icon) plus the all-time summary and calendar.
      * @param props - slot props; `wide` is the sidebar's expanded flag.
      */
     function TokenUsageAction({ wide }) {
-      const t = MESSAGES[detectLanguage()]
+      const language = detectLanguage()
+      const t = MESSAGES[language]
       const [open, setOpen] = React.useState(false)
-      const [days, setDays] = React.useState(DEFAULT_RANGE_DAYS)
       const [sequence, setSequence] = React.useState(0)
-      const [state, setState] = React.useState({ status: 'idle', days: DEFAULT_RANGE_DAYS, data: null, error: null })
+      const [state, setState] = React.useState({ status: 'idle', data: null, error: null })
       const [anchor, setAnchor] = React.useState(null)
       const rootRef = React.useRef(null)
       const buttonRef = React.useRef(null)
       const refreshRef = React.useRef(false)
 
-      /** Ask the next fetch for fresh host data (refetch, bypassing its cache). */
+      /** Ask the next fetch for fresh host data (bypassing its 60s cache). */
       const requestRefresh = React.useCallback(() => {
         refreshRef.current = true
-        setSequence((value) => value + 1)
+        setSequence(value => value + 1)
       }, [])
 
       React.useEffect(() => {
@@ -287,13 +358,8 @@ window.__ModuleLoader__.load({
         const controller = new AbortController()
         const refresh = refreshRef.current
         refreshRef.current = false
-        setState((previous) => ({
-          status: 'loading',
-          days,
-          data: previous.days === days ? previous.data : null,
-          error: null,
-        }))
-        const query = `${STATS_PATH}?days=${days}${refresh ? '&refresh=1' : ''}`
+        setState(previous => ({ status: 'loading', data: previous.data, error: null }))
+        const query = statsUrl(refresh)
         fetch(query, { cache: 'no-store', signal: controller.signal })
           .then((response) => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -301,20 +367,15 @@ window.__ModuleLoader__.load({
           })
           .then((data) => {
             if (controller.signal.aborted) return
-            setState({ status: 'ready', days, data, error: null })
+            setState({ status: 'ready', data, error: null })
           })
           .catch((error) => {
             if (controller.signal.aborted) return
             const message = error instanceof Error ? error.message : String(error)
-            setState((previous) => ({
-              status: 'error',
-              days,
-              data: previous.days === days ? previous.data : null,
-              error: message,
-            }))
+            setState(previous => ({ status: 'error', data: previous.data, error: message }))
           })
         return () => { controller.abort() }
-      }, [open, days, sequence])
+      }, [open, sequence])
 
       React.useLayoutEffect(() => {
         if (!open) return undefined
@@ -357,60 +418,46 @@ window.__ModuleLoader__.load({
 
       const data = state.data
       const series = data !== null && Array.isArray(data.series) ? data.series : []
+      const all = data !== null && data.allTime !== null && data.allTime !== undefined ? data.allTime : null
       const today = data !== null && data.today !== null && data.today !== undefined ? data.today : null
-      const totals = data !== null && data.totals !== null && data.totals !== undefined ? data.totals : null
-      const loadedDays = data !== null && typeof data.days === 'number' ? data.days : days
-      const todayDate = today !== null ? today.date : undefined
-      const busy = state.status === 'loading' || state.status === 'idle'
-      const week = seriesWindow(series, WEEK_DAYS)
-      const hasUsage = totals !== null && numberOf(totals.totalTokens) > 0
+      const todayKey = today !== null ? today.date : dayKey(new Date())
+      const activeDays = series.reduce((count, day) => count + (numberOf(day.totalTokens) > 0 ? 1 : 0), 0)
+      const hasUsage = all !== null && numberOf(all.totalTokens) > 0
       const skipped = data !== null ? numberOf(data.skippedSessions) : 0
+      const busy = state.status === 'loading' || state.status === 'idle'
 
-      const sections = [
-        h('div', {
-          key: 'ranges',
-          className: 'llmtu-ranges',
-          role: 'group',
-          'aria-label': t.rangeLabel,
-        }, RANGE_OPTIONS.map((option) => h('button', {
-          key: option,
-          type: 'button',
-          className: 'llmtu-range',
-          'aria-pressed': option === days,
-          onClick: () => { if (option !== days) setDays(option) },
-        }, t.rangeOption(option)))),
-      ]
-
+      const sections = []
       if (state.status === 'error') {
         sections.push(h('div', { key: 'error', className: 'llmtu-error', role: 'alert' }, [
           h('span', { key: 'message', children: t.loadFailed(state.error) }),
           h('button', { key: 'retry', type: 'button', className: 'llmtu-retry', onClick: requestRefresh }, t.retry),
         ]))
       }
-
       if (data === null) {
-        if (state.status !== 'error') {
-          sections.push(h('p', { key: 'loading', className: 'llmtu-note' }, t.loading))
-        }
+        if (state.status !== 'error') sections.push(h('p', { key: 'loading', className: 'llmtu-note' }, t.loading))
       } else {
-        if (busy) sections.push(h('p', { key: 'refreshing', className: 'llmtu-note' }, t.refreshing))
-        if (today !== null && totals !== null) {
-          sections.push(h('div', { key: 'cards', className: 'llmtu-cards' }, [
-            h(SummaryCard, { key: 'today', label: t.cardToday, entry: today, t }),
-            h(SummaryCard, { key: 'week', label: t.cardWeek, entry: week, t }),
-            h(SummaryCard, { key: 'range', label: t.cardRange(loadedDays), entry: totals, t }),
-          ]))
-        }
-        if (hasUsage) {
-          sections.push(h(BarChart, { key: 'chart', series, todayDate, t }))
-          sections.push(h(DailyTable, { key: 'table', series, todayDate, t }))
-        } else {
-          sections.push(h('p', { key: 'empty', className: 'llmtu-note' }, t.empty))
-        }
+        sections.push(h('div', { key: 'summary', className: 'llmtu-summary' }, [
+          h('div', { key: 'head', className: 'llmtu-summary-head' }, [
+            h('span', { key: 'label', className: 'llmtu-summary-label' }, t.total),
+            h('span', { key: 'detail', className: 'llmtu-summary-detail' },
+              `${t.inputOutput} ${formatTokens(all?.inputOutputTokens)} · ${t.cacheRead} ${formatTokens(all?.cacheReadTokens)}`),
+            h('span', {
+              key: 'value',
+              className: 'llmtu-summary-value',
+              title: formatFull(all?.totalTokens, language),
+            }, formatTokens(all?.totalTokens)),
+          ]),
+          h('div', { key: 'meta', className: 'llmtu-summary-meta' },
+            `${t.today} ${formatTokens(today?.totalTokens)} · ${t.activeDays} ${activeDays} · ${t.sessions} ${numberOf(data.sessionCount)}`),
+        ]))
+        sections.push(h(Calendar, { key: 'calendar', series, todayKey, t }))
+        if (!hasUsage) sections.push(h('p', { key: 'empty', className: 'llmtu-note' }, t.empty))
+        if (data.seriesTruncated === true) sections.push(h('p', { key: 'truncated', className: 'llmtu-note' }, t.truncated))
         if (skipped > 0 || data.incomplete === true) {
           sections.push(h('p', { key: 'incomplete', className: 'llmtu-note' }, t.incomplete(skipped)))
         }
       }
+      if (busy && data !== null) sections.push(h('p', { key: 'refreshing', className: 'llmtu-note' }, t.refreshing))
 
       const trigger = h('button', {
         ref: buttonRef,
@@ -420,7 +467,7 @@ window.__ModuleLoader__.load({
         'aria-haspopup': 'dialog',
         'aria-expanded': open,
         title: wide ? undefined : t.trigger,
-        onClick: () => setOpen((value) => !value),
+        onClick: () => setOpen(value => !value),
       }, [
         h('span', { key: 'icon', className: 'llmtu-badge-icon', children: barChartIcon(wide ? 16 : 18) }),
         wide ? h('span', { key: 'label', className: 'llmtu-badge-label', children: t.trigger }) : null,
@@ -477,55 +524,61 @@ window.__ModuleLoader__.load({
         h('div', { key: 'buttons', className: 'llmtu-footer-buttons', children: trigger }),
       ])
     }
-    /** All classes are prefixed `llmtu-`; colours are host theme tokens. */
+
+    /** All panel styling in one injected sheet; every value follows the host theme. */
     const STYLES = `
-.llmtu-layer{position:relative;display:flex;flex:none;align-items:center;width:100%;height:42px;margin:8px 0 0}
-.llmtu-layer.llmtu-rail{width:36px;height:36px;margin:0}
-.llmtu-footer-buttons{display:flex;align-items:center;width:100%}
-.llmtu-rail .llmtu-footer-buttons{flex-direction:column;gap:2px}
-.llmtu-badge{display:inline-flex;align-items:center;gap:8px;width:calc(100% + 4px);height:42px;margin:0 -2px;padding:0 10px 0 8px;border:0;border-radius:12px;background:transparent;color:var(--dsw-alias-label-primary,#1f2328);font-family:inherit;font-size:14px;cursor:pointer;overflow:hidden}
-.llmtu-badge:hover,.llmtu-badge[aria-expanded="true"]{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
-.llmtu-badge:focus-visible{outline:2px solid var(--dsw-focus-ring-color,#3b82f6);outline-offset:-2px}
-.llmtu-badge-icon{display:inline-flex;flex:none;align-items:center;color:var(--dsw-alias-label-secondary,#57606a)}
-.llmtu-badge-label{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.llmtu-badge-count{margin-left:auto;flex:none;color:var(--dsw-alias-label-tertiary,#8b949e);font-family:var(--dsh-font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-variant-numeric:tabular-nums;font-size:12px;line-height:16px}
-.llmtu-rail .llmtu-badge{justify-content:center;gap:0;width:36px;height:36px;padding:0;border-radius:50%}
-.llmtu-panel{position:fixed;z-index:30;display:flex;flex-direction:column;width:420px;max-width:calc(100vw - 24px);max-height:60vh;overflow:hidden;border:0.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.22));border-radius:12px;background:var(--dsw-specific-menu,#ffffff);box-shadow:var(--dsw-elevation-prominent,0 12px 32px rgba(0,0,0,.18));backdrop-filter:var(--dsw-menu-backdrop-filter,none);color:var(--dsw-alias-label-primary,#1f2328)}
-.llmtu-panel:focus{outline:none}
-.llmtu-header{display:flex;flex:none;align-items:center;justify-content:space-between;gap:8px;min-height:44px;padding:10px 12px;box-sizing:border-box}
-.llmtu-title{font-size:14px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-primary,#1f2328)}
-.llmtu-header-actions{display:flex;flex:none;align-items:center;gap:2px}
-.llmtu-icon-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:transparent;color:var(--dsw-alias-label-tertiary,#8b949e);cursor:pointer}
-.llmtu-icon-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14));color:var(--dsw-alias-label-secondary,#57606a)}
-.llmtu-icon-button:disabled{opacity:.4;cursor:default}
-.llmtu-icon-button:focus-visible{outline:2px solid var(--dsw-focus-ring-color,#3b82f6);outline-offset:-2px}
-.llmtu-body{flex:1;min-height:0;padding:0 12px 12px;overflow-y:auto}
-.llmtu-ranges{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
-.llmtu-range{padding:2px 10px;border:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.26));border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary,#57606a);font-family:inherit;font-size:12px;line-height:18px;cursor:pointer}
-.llmtu-range:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
-.llmtu-range[aria-pressed="true"]{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14));border-color:var(--dsw-alias-border-l4,rgba(127,127,127,.32));color:var(--dsw-alias-label-primary,#1f2328)}
-.llmtu-range:focus-visible{outline:2px solid var(--dsw-focus-ring-color,#3b82f6);outline-offset:1px}
-.llmtu-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 12px}
-.llmtu-card{display:flex;flex-direction:column;gap:1px;min-width:0;padding:8px 10px;border:0.5px solid var(--dsw-alias-border-l4,rgba(127,127,127,.16));border-radius:var(--dsw-radius-sm,8px)}
-.llmtu-card-label{overflow:hidden;color:var(--dsw-alias-label-caption,#8b949e);font-size:11px;line-height:16px;white-space:nowrap;text-overflow:ellipsis}
-.llmtu-card-value{overflow:hidden;color:var(--dsw-alias-label-primary,#1f2328);font-family:var(--dsh-font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:15px;font-weight:600;line-height:20px;font-variant-numeric:tabular-nums;white-space:nowrap;text-overflow:ellipsis}
-.llmtu-card-sub{overflow:hidden;color:var(--dsw-alias-label-tertiary,#8b949e);font-size:11px;line-height:15px;font-variant-numeric:tabular-nums;white-space:nowrap;text-overflow:ellipsis}
-.llmtu-chart{display:flex;align-items:flex-end;gap:1px;height:72px;margin:0 0 8px;padding:0 0 2px;border-bottom:0.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2))}
-.llmtu-bar-column{display:flex;flex:1 1 0;min-width:1px;height:100%;align-items:flex-end}
-.llmtu-bar{width:100%;border-radius:2px 2px 0 0;background:var(--dsw-alias-label-tertiary,#8b949e);opacity:.45}
-.llmtu-bar[data-today]{background:var(--dsw-alias-label-primary,#1f2328);opacity:.9}
-.llmtu-table{width:100%;border-collapse:collapse;font-size:11px;line-height:18px}
-.llmtu-table th{padding:2px 4px;color:var(--dsw-alias-label-caption,#8b949e);font-weight:500;text-align:left;white-space:nowrap}
-.llmtu-table td{padding:3px 4px;border-top:0.5px solid var(--dsw-alias-border-l4,rgba(127,127,127,.14));color:var(--dsw-alias-label-secondary,#57606a)}
-.llmtu-table .llmtu-num{text-align:right;font-family:var(--dsh-font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-variant-numeric:tabular-nums}
-.llmtu-table td.llmtu-date{color:var(--dsw-alias-label-tertiary,#8b949e);font-family:var(--dsh-font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);white-space:nowrap}
-.llmtu-table tr[data-today] td{color:var(--dsw-alias-label-primary,#1f2328)}
-.llmtu-table .llmtu-strong{color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
-.llmtu-note{margin:6px 0;color:var(--dsw-alias-label-tertiary,#8b949e);font-size:12px;line-height:18px}
-.llmtu-error{display:flex;align-items:center;gap:8px;margin:6px 0;color:var(--dsw-alias-state-error-primary,#d1242f);font-size:12px;line-height:18px}
-.llmtu-retry{margin-left:auto;flex:none;padding:2px 8px;border:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:999px;background:transparent;color:inherit;font-family:inherit;font-size:11px;cursor:pointer}
-.llmtu-retry:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
-`
+      .llmtu-layer{position:relative;display:flex;align-items:center;width:100%;height:42px;margin:8px 0 0;flex:none}
+      .llmtu-layer.llmtu-rail{width:36px;height:36px;margin:0}
+      .llmtu-footer-buttons{display:flex;align-items:center;width:100%}
+      .llmtu-badge{display:inline-flex;align-items:center;gap:8px;width:calc(100% + 4px);height:42px;margin:0 -2px;padding:0 10px 0 8px;border:0;border-radius:12px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;cursor:pointer;overflow:hidden}
+      .llmtu-badge:hover,.llmtu-badge[aria-expanded="true"]{background:var(--dsw-alias-interactive-bg-hover)}
+      .llmtu-rail .llmtu-badge{justify-content:center;width:36px;height:36px;margin:0;padding:0;border-radius:50%}
+      .llmtu-badge-icon{display:inline-flex;flex:none}
+      .llmtu-badge-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .llmtu-badge-count{margin-left:auto;flex:none;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:16px;font-variant-numeric:tabular-nums}
+      .llmtu-panel{position:fixed;isolation:isolate;z-index:40;display:flex;flex-direction:column;width:560px;max-width:calc(100vw - 24px);max-height:70vh;overflow:hidden;outline:none;border:0;border-radius:12px;box-shadow:var(--dsw-elevation-prominent);background:var(--dsw-specific-menu,#fff);backdrop-filter:var(--dsw-menu-backdrop-filter,none)}
+      .llmtu-header{flex:none;display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;box-sizing:border-box}
+      .llmtu-title{flex:1;min-width:0;font-size:14px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-primary,#1f2328)}
+      .llmtu-header-actions{display:flex;align-items:center;gap:4px}
+      .llmtu-icon-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--dsw-alias-label-tertiary,#8b949e);cursor:pointer}
+      .llmtu-icon-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14));color:var(--dsw-alias-label-primary,#1f2328)}
+      .llmtu-icon-button:disabled{opacity:.4;cursor:default}
+      .llmtu-body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 12px}
+      .llmtu-summary{padding:10px 12px;border:0.5px solid var(--dsw-alias-border-l4,rgba(127,127,127,.14));border-radius:10px}
+      .llmtu-summary-head{display:flex;align-items:baseline;gap:10px;min-width:0}
+      .llmtu-summary-label{flex:none;font-size:13px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary,#1f2328)}
+      .llmtu-summary-detail{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b949e);font-variant-numeric:tabular-nums}
+      .llmtu-summary-value{flex:none;font-size:22px;font-weight:600;line-height:28px;color:var(--dsw-alias-label-primary,#1f2328);font-variant-numeric:tabular-nums}
+      .llmtu-summary-meta{margin-top:4px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b949e);font-variant-numeric:tabular-nums}
+      .llmtu-cal{--llmtu-cell:10px;margin-top:14px}
+      .llmtu-cal-months{display:grid;column-gap:2px;height:14px;margin:0 0 2px 28px;color:var(--dsw-alias-label-caption,#8b949e);font-size:9px;line-height:12px;white-space:nowrap}
+      .llmtu-cal-month{grid-row:1;overflow:visible}
+      .llmtu-cal-body{display:flex;gap:6px;min-width:0}
+      .llmtu-cal-weekdays{display:grid;grid-template-rows:repeat(7,var(--llmtu-cell));gap:2px;width:22px;flex:none;color:var(--dsw-alias-label-caption,#8b949e);font-size:9px;line-height:var(--llmtu-cell);text-align:right}
+      .llmtu-cal-scroll{min-width:0;overflow-x:auto;overflow-y:hidden;padding-bottom:2px}
+      .llmtu-cal-weeks{display:flex;gap:2px}
+      .llmtu-cal-week{display:grid;grid-template-rows:repeat(7,var(--llmtu-cell));gap:2px}
+      .llmtu-cal-cell{width:var(--llmtu-cell);height:var(--llmtu-cell);border-radius:2px;background:var(--dsw-alias-border-l4,rgba(127,127,127,.2));opacity:.35;outline:none}
+      .llmtu-cal-cell[data-level="1"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.2}
+      .llmtu-cal-cell[data-level="2"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.4}
+      .llmtu-cal-cell[data-level="3"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.65}
+      .llmtu-cal-cell[data-level="4"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.95}
+      .llmtu-cal-cell[data-level="blank"]{background:transparent;opacity:0;pointer-events:none}
+      .llmtu-cal-cell[data-level]:not([data-level="blank"]):hover,.llmtu-cal-cell[data-level]:not([data-level="blank"]):focus{box-shadow:0 0 0 1px var(--dsw-alias-label-primary,#1f2328);opacity:1}
+      .llmtu-cal-cell[data-today]{box-shadow:0 0 0 1px var(--dsw-alias-label-tertiary,#8b949e)}
+      .llmtu-cal-legend{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:8px;color:var(--dsw-alias-label-tertiary,#8b949e);font-size:10px;line-height:14px}
+      .llmtu-cal-swatch{width:10px;height:10px;border-radius:2px;background:var(--dsw-alias-border-l4,rgba(127,127,127,.2));opacity:.35}
+      .llmtu-cal-swatch[data-level="1"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.2}
+      .llmtu-cal-swatch[data-level="2"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.4}
+      .llmtu-cal-swatch[data-level="3"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.65}
+      .llmtu-cal-swatch[data-level="4"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.95}
+      .llmtu-cal-tip{position:fixed;z-index:60;min-width:180px;max-width:280px;padding:8px 10px;border:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:8px;background:var(--dsw-specific-menu,#fff);box-shadow:var(--dsw-elevation-prominent,0 8px 24px rgba(0,0,0,.18));color:var(--dsw-alias-label-secondary,#57606a);font-size:11px;line-height:17px;font-variant-numeric:tabular-nums;pointer-events:none;transform:translate(-50%,-100%);margin-top:-6px}
+      .llmtu-cal-tip-date{display:block;margin-bottom:3px;color:var(--dsw-alias-label-primary,#1f2328);font-size:12px;line-height:18px}
+      .llmtu-note{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#8b949e);font-size:12px;line-height:18px}
+      .llmtu-error{display:flex;align-items:center;gap:8px;margin:8px 0;color:var(--dsw-alias-state-error-primary,#d1242f);font-size:12px;line-height:18px}
+      .llmtu-retry{margin-left:auto;flex:none;padding:2px 8px;border:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:11px;cursor:pointer}
+      .llmtu-retry:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
+    `
     return {
       inject: ['slots'],
       apply(ctx) {
