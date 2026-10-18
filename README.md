@@ -26,7 +26,7 @@ dsh plugin --profile desktop add D:\WORK\ai-v5\LLMDSHPlugin
 dsh plugin --profile desktop add github:ai-v5/LLMDSHPlugin
 ```
 
-安装后重启 DSH Desktop（或重新加载窗口）。插件会出现在侧边栏左下角 Settings 上方。
+安装后重启 DSH Desktop。插件会出现在左侧栏底部 Settings 上方（同一区域还有 Cordis 入口）。如果终端里没有 `dsh` 命令，可使用 DSH Desktop 安装目录下的 `resources\runtime\cli\bin\dsh.cmd`。
 
 卸载：
 
@@ -69,6 +69,13 @@ GET /api/llm-token-usage/stats?days=30&refresh=1
 ```
 
 结果缓存 60 秒；`refresh=1` 跳过缓存。
+
+## 已知限制
+
+- AI 会话标题（session title）等辅助调用不写入 Session 日志，因此不会计入；如果部署把这些调用计费，面板总量会略低于账单。
+- 读取失败的 Session 会被跳过，面板会显示 `skippedSessions` 提示。
+- 统计是 provider 上报 usage 的汇总，不是计费账单；不同 provider 对缓存读/写的上报口径可能不同。
+- 首次打开或刷新需要扫描全部 Session 日志，Session 很多时会有短暂延迟；结果缓存 60 秒。
 
 ## 开发
 
