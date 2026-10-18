@@ -36,6 +36,7 @@
     "client.js",
     "lib/*.js",
     "cordis.patch.yml",
+    "dsh.plugin.json",
     "locale/*.json",
     "icon.svg",
     "README.md",

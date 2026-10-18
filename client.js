@@ -111,7 +111,7 @@ window.__ModuleLoader__.load({
       const count = Math.round(numberOf(value))
       if (count < 1000) return String(count)
       if (count >= 1e9) return trimFraction((count / 1e9).toFixed(2)) + 'B'
-      if (count >= 1e6) return trimFraction((count / 1e6).toFixed(2)) + 'M'
+      if (count >= 999950) return trimFraction((count / 1e6).toFixed(2)) + 'M'
       if (count >= 1e5) return Math.round(count / 1e3) + 'K'
       return trimFraction((count / 1e3).toFixed(1)) + 'K'
     }
