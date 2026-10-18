@@ -11,6 +11,7 @@ window.__ModuleLoader__.load({
   id: 'llm-dsh-token-usage',
   factory(require) {
     const React = require('react')
+    const ReactDOM = require('react-dom')
     const h = React.createElement
 
     /** Stats route owned by the host half of this bundle. */
@@ -268,10 +269,12 @@ window.__ModuleLoader__.load({
         const day = cell.day ?? {
           totalTokens: 0, inputOutputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, sessions: 0,
         }
-        setHover({ x: rect.left + rect.width / 2, y: rect.top, key: cell.key, day })
+        const below = rect.top < 160
+        const x = Math.min(Math.max(rect.left + rect.width / 2, 150), Math.max(150, window.innerWidth - 150))
+        setHover({ x, y: below ? rect.bottom + 8 : rect.top - 6, below, key: cell.key, day })
       }
       const hide = () => { setHover(null) }
-      return h('div', { className: 'llmtu-cal' }, [
+      const calendarNode = h('div', { className: 'llmtu-cal' }, [
         h('div', {
           key: 'months',
           className: 'llmtu-cal-months',
@@ -315,9 +318,11 @@ window.__ModuleLoader__.load({
           })),
           h('span', { key: 'more' }, t.more),
         ]),
-        hover === null ? null : h('div', {
-          key: 'tip',
+      ])
+      const tip = hover === null ? null : ReactDOM.createPortal(
+        h('div', {
           className: 'llmtu-cal-tip',
+          'data-placement': hover.below ? 'bottom' : 'top',
           style: { left: hover.x, top: hover.y },
           role: 'tooltip',
         }, [
@@ -328,7 +333,9 @@ window.__ModuleLoader__.load({
             `${t.cacheRead} ${formatFull(hover.day.cacheReadTokens, language)} · ${t.cacheWrite} ${formatFull(hover.day.cacheWriteTokens, language)}`),
           h('div', { key: 'sessions' }, `${t.sessions} ${numberOf(hover.day.sessions)}`),
         ]),
-      ])
+        document.body,
+      )
+      return h(React.Fragment, null, calendarNode, tip)
     }
 
     /**
@@ -536,7 +543,7 @@ window.__ModuleLoader__.load({
       .llmtu-badge-icon{display:inline-flex;flex:none}
       .llmtu-badge-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .llmtu-badge-count{margin-left:auto;flex:none;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:16px;font-variant-numeric:tabular-nums}
-      .llmtu-panel{position:fixed;isolation:isolate;z-index:40;display:flex;flex-direction:column;width:560px;max-width:calc(100vw - 24px);max-height:70vh;overflow:hidden;outline:none;border:0;border-radius:12px;box-shadow:var(--dsw-elevation-prominent);background:var(--dsw-specific-menu,#fff);backdrop-filter:var(--dsw-menu-backdrop-filter,none)}
+      .llmtu-panel{position:fixed;isolation:isolate;z-index:40;display:flex;flex-direction:column;width:660px;max-width:calc(100vw - 24px);max-height:70vh;overflow:hidden;outline:none;border:0;border-radius:12px;box-shadow:var(--dsw-elevation-prominent);background:var(--dsw-specific-menu,#fff);backdrop-filter:var(--dsw-menu-backdrop-filter,none)}
       .llmtu-header{flex:none;display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;box-sizing:border-box}
       .llmtu-title{flex:1;min-width:0;font-size:14px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-primary,#1f2328)}
       .llmtu-header-actions{display:flex;align-items:center;gap:4px}
@@ -550,12 +557,12 @@ window.__ModuleLoader__.load({
       .llmtu-summary-detail{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b949e);font-variant-numeric:tabular-nums}
       .llmtu-summary-value{flex:none;font-size:22px;font-weight:600;line-height:28px;color:var(--dsw-alias-label-primary,#1f2328);font-variant-numeric:tabular-nums}
       .llmtu-summary-meta{margin-top:4px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b949e);font-variant-numeric:tabular-nums}
-      .llmtu-cal{--llmtu-cell:10px;margin-top:14px}
+      .llmtu-cal{--llmtu-cell:9px;margin-top:14px}
       .llmtu-cal-months{display:grid;column-gap:2px;height:14px;margin:0 0 2px 28px;color:var(--dsw-alias-label-caption,#8b949e);font-size:9px;line-height:12px;white-space:nowrap}
       .llmtu-cal-month{grid-row:1;overflow:visible}
       .llmtu-cal-body{display:flex;gap:6px;min-width:0}
       .llmtu-cal-weekdays{display:grid;grid-template-rows:repeat(7,var(--llmtu-cell));gap:2px;width:22px;flex:none;color:var(--dsw-alias-label-caption,#8b949e);font-size:9px;line-height:var(--llmtu-cell);text-align:right}
-      .llmtu-cal-scroll{min-width:0;overflow-x:auto;overflow-y:hidden;padding-bottom:2px}
+      .llmtu-cal-scroll{min-width:0;overflow:visible}
       .llmtu-cal-weeks{display:flex;gap:2px}
       .llmtu-cal-week{display:grid;grid-template-rows:repeat(7,var(--llmtu-cell));gap:2px}
       .llmtu-cal-cell{width:var(--llmtu-cell);height:var(--llmtu-cell);border-radius:2px;background:var(--dsw-alias-border-l4,rgba(127,127,127,.2));opacity:.35;outline:none}
@@ -572,12 +579,15 @@ window.__ModuleLoader__.load({
       .llmtu-cal-swatch[data-level="2"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.4}
       .llmtu-cal-swatch[data-level="3"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.65}
       .llmtu-cal-swatch[data-level="4"]{background:var(--dsw-alias-state-business-primary,#2563eb);opacity:.95}
-      .llmtu-cal-tip{position:fixed;z-index:60;min-width:180px;max-width:280px;padding:8px 10px;border:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:8px;background:var(--dsw-specific-menu,#fff);box-shadow:var(--dsw-elevation-prominent,0 8px 24px rgba(0,0,0,.18));color:var(--dsw-alias-label-secondary,#57606a);font-size:11px;line-height:17px;font-variant-numeric:tabular-nums;pointer-events:none;transform:translate(-50%,-100%);margin-top:-6px}
+      .llmtu-cal-tip{position:fixed;z-index:1000;min-width:180px;max-width:280px;padding:8px 10px;border:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:8px;background:var(--dsw-specific-menu,#fff);box-shadow:var(--dsw-elevation-prominent,0 8px 24px rgba(0,0,0,.18));color:var(--dsw-alias-label-secondary,#57606a);font-size:11px;line-height:17px;font-variant-numeric:tabular-nums;pointer-events:none;transform:translate(-50%,-100%);margin-top:-6px}
+      .llmtu-cal-tip[data-placement="bottom"]{transform:translate(-50%,0);margin-top:0}
       .llmtu-cal-tip-date{display:block;margin-bottom:3px;color:var(--dsw-alias-label-primary,#1f2328);font-size:12px;line-height:18px}
       .llmtu-note{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#8b949e);font-size:12px;line-height:18px}
       .llmtu-error{display:flex;align-items:center;gap:8px;margin:8px 0;color:var(--dsw-alias-state-error-primary,#d1242f);font-size:12px;line-height:18px}
       .llmtu-retry{margin-left:auto;flex:none;padding:2px 8px;border:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:11px;cursor:pointer}
       .llmtu-retry:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
+      @media (max-width:700px){.llmtu-panel{width:calc(100vw - 24px)}.llmtu-cal{--llmtu-cell:7px}}
+      @media (max-width:560px){.llmtu-cal{--llmtu-cell:6px}}
     `
     return {
       inject: ['slots'],
