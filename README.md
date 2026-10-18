@@ -5,9 +5,9 @@ DeepSeek Harness (DSH) 插件：在桌面端/Web 端侧边栏左下角增加 **T
 ## 功能
 
 - 左下角 footer 常驻入口，显示今日 token 总量。
-- 点击展开统计面板：今日、近 7 天、近 N 天总量，以及每日柱状图和明细列表。
+- 点击展开统计面板：第一行是**全部历史总量**，下面是 GitHub 风格的每日日历热力图；颜色深浅表示当天用量，鼠标悬停/键盘聚焦可看当天总量、输入+输出、缓存读写和会话数。
 - 按 provider 上报的 usage 统计，包含 `inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheWriteTokens`。
-- 支持 7 / 14 / 30 / 90 天范围切换与手动刷新。
+- 日历显示最近 365 天；顶部总量覆盖全部历史。
 - 只读扫描 Session 历史，不修改任何 Session 或配置；fork 继承的事件不会重复计数。
 
 ## 安装
@@ -48,20 +48,22 @@ dsh plugin --profile desktop remove llm-dsh-token-usage
 Host 端注册只读路由：
 
 ```
-GET /api/llm-token-usage/stats?days=30&refresh=1
+GET /api/llm-token-usage/stats?range=all&refresh=1
 ```
 
-返回：
+也兼容 `?days=7|14|30|90` 的有界范围。返回：
 
 ```json
 {
   "generatedAt": 1760000000000,
-  "days": 30,
-  "range": { "from": "2026-09-19", "to": "2026-10-18" },
+  "days": 366,
+  "rangeKind": "all",
+  "seriesTruncated": false,
+  "range": { "from": "2025-10-19", "to": "2026-10-18" },
   "today": { "date": "2026-10-18", "inputTokens": 0, "outputTokens": 0, "cacheReadTokens": 0, "cacheWriteTokens": 0, "totalTokens": 0, "inputOutputTokens": 0, "sessions": 0 },
   "totals": { "...": "same shape as today" },
   "allTime": { "...": "same shape as today" },
-  "series": [{ "date": "2026-09-19", "...": "same shape as today" }],
+  "series": [{ "date": "2025-10-19", "...": "same shape as today" }],
   "sessionCount": 0,
   "skippedSessions": 0,
   "incomplete": false
