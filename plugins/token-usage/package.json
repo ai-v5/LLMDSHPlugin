@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "description": "DSH sidebar token usage statistics: per-day token usage for every Session in the current profile.",
   "type": "module",
-  "private": true,
   "license": "MIT",
   "icon": "./icon.svg",
   "homepage": "https://github.com/ai-v5/LLMDSHPlugin",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ai-v5/LLMDSHPlugin.git"
+    "url": "https://github.com/ai-v5/LLMDSHPlugin.git",
+    "directory": "plugins/token-usage"
   },
   "bugs": {
     "url": "https://github.com/ai-v5/LLMDSHPlugin/issues"
